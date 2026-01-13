@@ -39,8 +39,27 @@ class IDRACCollector:
         print(f"Serial (ST):  {data.get('SKU', 'N/A')}") # Dell usually puts ST in SKU or SerialNumber
         if data.get('SerialNumber'):
              print(f"Serial No:    {data.get('SerialNumber')}")
+        print(f"Asset Tag:    {data.get('AssetTag', 'N/A')}")
         print(f"Power State:  {data.get('PowerState', 'N/A')}")
         print(f"Bios Version: {data.get('BiosVersion', 'N/A')}")
+
+    def collect_power_info(self):
+        """获取电源 (PSU) 信息"""
+        # Dell 通常在 /Chassis/System.Embedded.1/Power
+        data = self.get(f"/Chassis/{self.system_id}/Power")
+        psus = data.get("PowerSupplies", [])
+        
+        print("\n--- 1.1 电源信息 (PSU) ---")
+        for i, psu in enumerate(psus):
+            name = psu.get("Name", f"PSU #{i+1}")
+            model = psu.get("Model", "N/A")
+            capacity = psu.get("PowerCapacityWatts", "N/A")
+            serial = psu.get("SerialNumber", "N/A")
+            status = psu.get("Status", {}).get("State", "N/A")
+            part_num = psu.get("PartNumber", "N/A")
+            
+            print(f"{name}: {capacity}W | Status: {status}")
+            print(f"  Model: {model} | P/N: {part_num} | S/N: {serial}")
 
     def collect_processors(self):
         """获取 CPU 信息"""
@@ -96,13 +115,36 @@ class IDRACCollector:
         data = self.get(f"/Systems/{self.system_id}/EthernetInterfaces")
         members = data.get("Members", [])
         
-        print("\n--- 5. 网络接口 ---")
+        print("\n--- 5. 业务网络接口 (System NICs) ---")
         for member in members:
             nic = self.get(member['@odata.id'].replace('/redfish/v1', ''))
             print(f"Interface: {nic.get('Id', 'N/A')} ({nic.get('Name', 'N/A')})")
             print(f"  MAC Address: {nic.get('MACAddress', 'N/A')}")
             print(f"  Speed:       {nic.get('SpeedMbps', 'N/A')} Mbps")
             print(f"  Status:      {nic.get('Status', {}).get('State', 'N/A')}")
+
+    def collect_idrac_mgmt(self):
+        """获取 iDRAC 管理口信息"""
+        print("\n--- 6. iDRAC 管理口信息 (Mgmt NIC) ---")
+        # 通常是 /Managers/iDRAC.Embedded.1
+        managers = self.get("/Managers")
+        for mgr_ref in managers.get("Members", []):
+            mgr_url = mgr_ref['@odata.id'].replace('/redfish/v1', '')
+            
+            # 获取该 Manager 的网卡
+            eth_resp = self.get(f"{mgr_url}/EthernetInterfaces")
+            for eth_ref in eth_resp.get("Members", []):
+                nic = self.get(eth_ref['@odata.id'].replace('/redfish/v1', ''))
+                
+                print(f"Interface: {nic.get('Id', 'N/A')} ({nic.get('Name', 'N/A')})")
+                print(f"  MAC Address: {nic.get('MACAddress', 'N/A')}")
+                print(f"  Status:      {nic.get('Status', {}).get('State', 'N/A')}")
+                
+                for ipv4 in nic.get('IPv4Addresses', []):
+                    # 过滤掉 0.0.0.0
+                    addr = ipv4.get('Address')
+                    if addr and addr != "0.0.0.0":
+                        print(f"  IPv4:        {addr} / {ipv4.get('SubnetMask')} (Gateway: {ipv4.get('Gateway')})")
 
 def main():
     parser = argparse.ArgumentParser(description="Collect Hardware Info from Dell iDRAC via Redfish")
@@ -116,10 +158,12 @@ def main():
     
     print(f"Connecting to {args.ip}...")
     collector.collect_system_info()
+    collector.collect_power_info()
     collector.collect_processors()
     collector.collect_memory()
     collector.collect_storage()
     collector.collect_network()
+    collector.collect_idrac_mgmt()
 
 if __name__ == "__main__":
     main()
